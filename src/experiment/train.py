@@ -1,3 +1,5 @@
+import sys
+sys.path.append("/nas/srcs/anet_debug")
 import json
 import argparse
 
@@ -26,7 +28,6 @@ def _get_argument_params():
 
 """ Training the network """
 def train(config):
-
     # create loggers
     it_logger = cmf.create_logger(config, "ITER", "train.log")
     eval_logger = cmf.create_logger(config, "EPOCH", "scores.log")
