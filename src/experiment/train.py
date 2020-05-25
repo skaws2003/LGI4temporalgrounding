@@ -5,7 +5,8 @@ import argparse
 
 from src.experiment import common_functions as cmf
 from src.utils import timer
-
+import warnings
+warnings.simplefilter("ignore", UserWarning)
 
 """ Get parameters """
 def _get_argument_params():
@@ -49,6 +50,7 @@ def train(config):
     apply_cl_after = config["model"].get("curriculum_learning_at", -1)
 
     vis_every = config["misc"].get("vis_every", -1) # epoch
+    """
     if vis_every > 0:
         nsamples = config["misc"].get("vis_nsamples", 12)
         vis_data = dsets["train"].get_samples(int(nsamples/2))
@@ -56,7 +58,7 @@ def train(config):
         vis_data = dsets["train"].collate_fn(vis_data)
         vis_inp, vis_gt = net.prepare_batch(vis_data)
         net.visualize(vis_inp, vis_gt, "epoch{:03d}".format(0))
-
+    """
     # We evaluate initialized model
     #cmf.test(config, L["test"], net, 0, eval_logger, mode="Valid")
     ii = 1
@@ -97,8 +99,8 @@ def train(config):
             # iteration done
 
         # visualize network learning status
-        if (vis_every > 0) and (epoch % vis_every == 0):
-            net.visualize(vis_inp, vis_gt, "epoch{:03d}".format(epoch))
+        #if (vis_every > 0) and (epoch % vis_every == 0):
+        #    net.visualize(vis_inp, vis_gt, "epoch{:03d}".format(epoch))
 
         # validate current model
         if (epoch > eval_after) and (epoch % eval_every == 0):
