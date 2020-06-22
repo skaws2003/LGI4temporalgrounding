@@ -325,8 +325,10 @@ class LGI(torch.nn.Module):
         # case: batch size is smaller than device count
         if batch_size < device_cnt:
             for i in range(batch_size):
-                device_batch = [batch[i]]
-                self.batch_to_device(device_batch,self.device_ids[i])
+                device_batch = {}
+                for k in batch.keys():
+                    device_batch[k] = batch[k][i:i+1].to(self.device_ids[i]) \
+                        if isinstance(batch[k], torch.Tensor) else batch[k][i:i+1]
                 new_batch.append(device_batch)
             return new_batch
         # else: batch size is bigger than device count
@@ -371,9 +373,16 @@ class LGI(torch.nn.Module):
         # if device is cpu
         if not self.device_ids:
             return self.module(batch)
-        replicas = self.replicate(self.module,self.device_ids)
+        # replicate module
+        batch_size = len(batch['video_feats'])
+        if batch_size < len(self.device_ids):
+            replicas = self.replicate(self.module,self.device_ids[:batch_size])
+        else:
+            replicas = self.replicate(self.module,self.device_ids)
+        # scatter and apply
         inputs = self.scatter(batch)
         outputs = self.parallel_apply(replicas,inputs)
+        # gather and return
         return self.gather(outputs,self.output_device)
 
     ###################################### LGI functions ################################################
@@ -439,6 +448,9 @@ class LGI(torch.nn.Module):
     
     def save_checkpoint(self,*args,**kwargs):
         self.module.save_checkpoint(*args,**kwargs)
+
+    def load_checkpoint(self,*args,**kwargs):
+        self.module.load_checkpoint(*args,**kwargs)
 
     def forward_only(self,net_inps):
         net_out = self.forward(net_inps)
