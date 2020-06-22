@@ -1,5 +1,5 @@
 import sys
-sys.path.append("/nas/srcs/anet_debug")
+sys.path.append("/data")
 import json
 import argparse
 
@@ -43,6 +43,7 @@ def train(config):
     net.create_tensorboard_summary(config["misc"]["tensorboard_dir"])
 
     """ Run training network """
+    # load config values
     eval_every = config["evaluation"].get("every_eval", 1) # epoch
     eval_after= config["evaluation"].get("after_eval", 0) # epoch
     print_every = config["misc"].get("print_every", 1) # iteration
@@ -70,9 +71,8 @@ def train(config):
         # curriculum learning
         if (apply_cl_after > 0) and (epoch == apply_cl_after):
             net.apply_curriculum_learning()
-
+        # training loop
         for batch in L["train"]:
-
             # Forward and update the network
             data_load_duration = tm.get_duration()
             tm.reset()

@@ -709,7 +709,7 @@ class DQALoss(nn.Module):
 
         if torch.isnan(P).sum() > 0:
             print("attw: ", attw)
-            pdb.set_trace()
+            #pdb.set_trace()
 
         da_loss = self.w * (P**2).mean()
 

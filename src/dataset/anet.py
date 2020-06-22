@@ -3,7 +3,7 @@ from __future__ import division
 from __future__ import print_function
 
 import os
-import pdb
+#import pdb
 import time
 import json
 import h5py
@@ -11,6 +11,7 @@ import string
 import numpy as np
 np.set_printoptions(precision=4)
 from tqdm import tqdm
+from random import random
 
 import torch
 import torch.utils.data as data
@@ -47,6 +48,12 @@ class ActivityNetCaptionsDataset(AbstractDataset):
         self.in_memory = config.get("in_memory", False)
         self.feat_hdf5 = config.get("video_feature_path",
                 "data/ActivityNet/feats/sub_activitynet_v1-3.c3d.hdf5")
+
+        # cropping augmentation settings
+        self.cropping_augmentation = config.get("cropping_augmentation",False)
+        self.cropping_prob = config.get("cropping_prob",0.5)
+        self.cropping_factor = config.get("cropping_factor",0.5)
+        self.no_aug = False
 
         # get paths for proposals and captions
         paths = self._get_data_path(config)
@@ -115,34 +122,61 @@ class ActivityNetCaptionsDataset(AbstractDataset):
             vid_feat_all = self.feats[vid]
         else:
             vid_feat_all = io_utils.load_hdf5(self.feat_hdf5, verbose=False)[vid]["c3d_features"]
+
+        # Cropping Augmentation, part 1
+        cropping = random()
+        do_crop = self.cropping_augmentation and self.split == "train" and (not self.no_aug) and (cropping > self.cropping_prob)
+        if do_crop:
+            # treat defective case
+            cut_start = random() * timestamp[0] * self.cropping_factor
+            cut_end = random() * (duration - timestamp[1]) * self.cropping_factor
+            # modify vid_all
+            nfeats_all = vid_feat_all.shape[0]
+            keep = utils.timestamp_to_featstamp([cut_start,duration-cut_end],nfeats_all,duration)
+            vid_feat_all = vid_feat_all[keep[0]:keep[1]+1]
+            # modify duration, timestamp, grounding label
+            duration = duration - cut_start - cut_end
+            timestamp = [timestamp[0] - cut_start, timestamp[1] - cut_start]
+            start_pos = timestamp[0] / duration
+            end_pos = timestamp[1] / duration
+        
+        # Adjust video feats
         vid_feat, nfeats, start_index, end_index = self.get_fixed_length_feat(
                 vid_feat_all, self.S, start_pos, end_pos)
+        
+        # Cropping augmentation, part 2
+        if do_crop:
+            # if training, make attention mask
+            fs = utils.timestamp_to_featstamp(timestamp, nfeats, duration)
+            att_mask = np.zeros((self.S))
+            att_mask[fs[0]:fs[1]+1] = 1
+        else:
+            # if not training, get attention mask
+            if self.in_memory:
+                att_mask = self.att_mask[qid]
+            else:
+                att_mask = grd_info["att_mask/"+qid][:]
 
         # get video masks
         vid_mask = np.zeros((self.S, 1))
         vid_mask[:nfeats] = 1
 
-        # get attention mask
-        if self.in_memory:
-            att_mask = self.att_mask[qid]
-        else:
-            att_mask = grd_info["att_mask/"+qid][:]
+        
         instance = {
-            "vids": vid,
-            "qids": qid,
+            "vids": vid,    # video name
+            "qids": qid,    # query id
             "timestamps": timestamp, # GT location [s, e] (seconds)
             "duration": duration, # video span (seconds)
-            "query_lengths": q_leng,
+            "query_lengths": q_leng,    # query lengths
             "query_labels": torch.LongTensor(q_label).unsqueeze(0),     # [1,L_q_max]
             "query_masks": (torch.FloatTensor(q_label)>0).unsqueeze(0), # [1,L_q_max]
-            "grounding_start_pos": torch.FloatTensor([start_pos]), # [1]; normalized
-            "grounding_end_pos": torch.FloatTensor([end_pos]),     # [1]; normalized
-            "grounding_att_masks": torch.FloatTensor(att_mask),  # [L_v]
-            "nfeats": torch.FloatTensor([nfeats]),
+            "grounding_start_pos": torch.FloatTensor([start_pos]), # [1]; normalized starting point
+            "grounding_end_pos": torch.FloatTensor([end_pos]),     # [1]; normalized ending point
+            "grounding_att_masks": torch.FloatTensor(att_mask),  # [L_v] - language
+            "nfeats": torch.FloatTensor([nfeats]),  # video feature length
             "video_feats": torch.FloatTensor(vid_feat), # [L_v,D_v]
             "video_masks": torch.ByteTensor(vid_mask), # [L_v,1]
         }
-
         return instance
 
     def collate_fn(self, data):

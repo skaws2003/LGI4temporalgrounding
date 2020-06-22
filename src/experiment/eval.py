@@ -1,6 +1,7 @@
 import json
 import argparse
-
+import sys
+sys.path.append("/data")
 from src.experiment import common_functions as cmf
 from src.utils import io_utils
 
