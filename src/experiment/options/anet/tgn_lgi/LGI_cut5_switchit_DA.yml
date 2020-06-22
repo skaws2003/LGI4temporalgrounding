@@ -70,7 +70,7 @@ train_loader:
     split: "train"
     in_memory: True
     #in_memory: False
-    batch_size: 8
+    batch_size: 100
     data_dir: "data/ActivityNet"
     feature_type: "C3D"
     video_feature_path: "data/ActivityNet/feats/sub_activitynet_v1-3.c3d.hdf5"
@@ -83,7 +83,7 @@ test_loader:
     split: "val"
     in_memory: True
     #in_memory: False
-    batch_size: 8
+    batch_size: 100
     data_dir: "data/ActivityNet"
     feature_type: "C3D"
     video_feature_path: "data/ActivityNet/feats/sub_activitynet_v1-3.c3d.hdf5"
@@ -94,14 +94,14 @@ test_loader:
     word_frequency_threshold: 1
     num_segment: 128
 optimize:
-    num_step: 30 # epoch
+    num_step: 240 # epoch
     optimizer_type: "Adam"
     init_lr: 0.0004
     scheduler_type: ""
     decay_factor: 0.5
     decay_step: -1
 evaluation:
-    evaluate_after: -1
+    evaluate_after: 50
     every_eval: 1
     print_every: 100
 misc:
