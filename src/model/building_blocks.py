@@ -648,6 +648,17 @@ class MultipleCriterions(nn.Module):
     def get_crit_by_name(self, name):
         return self.name2crit[name]
 
+class CRLoss(nn.Module):
+    """
+    dummy loss class for CRloss
+    """
+    def __init__(self,cfg,prefix=""):
+        super(CRLoss,self).__init__()
+        self.name = prefix if prefix is "" else prefix+"_"
+    
+    def forward(self,net_outs,gts):
+        return torch.mean(net_outs["crloss"])
+
 class TGRegressionCriterion(nn.Module):
     """
     Loss function to compute weighted Binary Cross-Entropy loss

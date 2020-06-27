@@ -2,9 +2,11 @@ import torch.nn as nn
 
 # import networks
 from src.model import LGI
+from src.model import LGI_CR
 
 """ Network Mapping """
 TGN_LGI = LGI.LGI
+TGN_LGI_CR = LGI_CR.LGI_CR
 
 def get_rnn(config, prefix=""):
     name = prefix if prefix is "" else prefix+"_"
@@ -36,6 +38,8 @@ def get_rnn_cell(config, prefix=""):
 def get_temporal_grounding_network(config, net_type="tgn", raw=False):
     if net_type == "tgn_lgi":
         M = TGN_LGI
+    elif net_type == "tgn_lgi_cr":
+        M = TGN_LGI_CR
     else:
         raise NotImplementedError(
             "Not supported TGN ({})".format(net_type))

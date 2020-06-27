@@ -78,7 +78,7 @@ def append_text_to_file(file_path, append):
 
 def load_lines_from(file_path):
     lines = []
-    f = open(file_path, "r")
+    f = open(file_path, "r",encoding='utf-8')
     while True:
         line = f.readline()
         if not line: break
