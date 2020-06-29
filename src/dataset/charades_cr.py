@@ -116,7 +116,7 @@ class CharadesCRDataset(AbstractDataset):
         q_leng = self.query_lengths[qid]
 
         # get augmented query labels
-        aug_qid = str(self.qids[idx*5 + randint(1,4)])
+        aug_qid = str(self.qids[idx*5 + randint(0,4)])
         if self.in_memory:
             aug_q_label = self.query_labels[aug_qid]
         else:

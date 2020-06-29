@@ -25,3 +25,4 @@ pretrained_models
 
 # garbage
 *.DS_Store
+src/experiment/aux_options

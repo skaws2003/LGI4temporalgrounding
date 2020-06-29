@@ -97,10 +97,10 @@ class Single_LGI_CR(AbstractNetwork):
 
     def _infer_train(self,net_inps,mode="forward",gts=None):
         # fetch inputs
-        word_labels = net_inps["query_labels"] # [B,L] (nword == L)
-        word_masks = net_inps["query_masks"] # [B,L]
-        aug_word_labels = net_inps["aug_query_labels"] # [B,L] (nword == L)
-        aug_word_masks = net_inps["aug_query_masks"] # [B,L]
+        word_labels = net_inps["aug_query_labels"] # [B,L] (nword == L)
+        word_masks = net_inps["aug_query_masks"] # [B,L]
+        ori_word_labels = net_inps["query_labels"] # [B,L] (nword == L)
+        ori_word_masks = net_inps["query_masks"] # [B,L]
         c3d_feats = net_inps["video_feats"]  # [B,T,d_v]
         seg_masks = net_inps["video_masks"].squeeze(2) # [B,T]
         B, nseg, _ = c3d_feats.size() # nseg == T
@@ -108,8 +108,9 @@ class Single_LGI_CR(AbstractNetwork):
         # forward encoders
         # get word-level, sentence-level and segment-level features
         word_feats, sen_feats = self.query_enc(word_labels, word_masks, "both") # [B,L,*]
-        aug_word_feats, aug_sen_feats = self.query_enc(aug_word_labels, aug_word_masks, "both") # [B,L,*]
-        aug_word_feats.detach()
+        ori_word_feats, ori_sen_feats = self.query_enc(ori_word_labels, ori_word_masks, "both") # [B,L,*]
+        ori_word_feats = ori_word_feats.detach()
+        ori_sen_feats = ori_sen_feats.detach()
         seg_feats = self.video_enc(c3d_feats, seg_masks) # [B,nseg,*]
 
         # get semantic phrase features:
@@ -138,7 +139,7 @@ class Single_LGI_CR(AbstractNetwork):
         if mode == "forward":
             outs = OrderedDict()
             outs["grounding_loc"] = loc
-            outs["crloss"] = torch.mean(torch.nn.functional.smooth_l1_loss(sen_feats,aug_sen_feats,reduction='none'),dim=1)
+            outs["crloss"] = torch.mean(torch.nn.functional.mse_loss(sen_feats,ori_sen_feats,reduction='none'),dim=1)
             if self.use_tag_loss:
                 outs["tag_attw"] = t_attw
             if self.use_dqa_loss:
