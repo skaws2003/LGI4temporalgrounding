@@ -13,6 +13,7 @@ from tqdm import tqdm
 
 import torch
 import torch.utils.data as data
+from random import random, randint
 
 from src.dataset.abstract_dataset import AbstractDataset
 from src.utils import utils, io_utils
@@ -51,6 +52,12 @@ class CharadesDataset(AbstractDataset):
             )
         else:
             raise ValueError("Wrong feature_type")
+
+        # cropping augmentation settings
+        self.cropping_augmentation = config.get("cropping_augmentation",False)
+        self.cropping_prob = config.get("cropping_prob",0.5)
+        self.cropping_factor = config.get("cropping_factor",0.5)
+        self.no_aug = False
 
         # get paths for proposals and captions
         paths = self._get_data_path(config)
@@ -114,25 +121,54 @@ class CharadesDataset(AbstractDataset):
             end_pos = grd_info["end_pos/"+qid][()]
 
         # get video features
-        if self.feature_type == "I3D":
-            if self.in_memory:
-                vid_feat_all = self.feats[vid]
-            else:
-                vid_feat_all = np.load(self.feat_path.format(vid)).squeeze()
-            vid_feat, nfeats, start_index, end_index = self.get_fixed_length_feat(
-                vid_feat_all, self.S, start_pos, end_pos)
+        if self.in_memory:
+            vid_feat_all = self.feats[vid]
         else:
-            raise ValueError("Wrong feature_type")
+            vid_feat_all = np.load(self.feat_path.format(vid)).squeeze()
+        
+        # treat defective case
+        if timestamp[1] > duration:
+            duration = timestamp[1]
+        if timestamp[0] > timestamp[1]:
+            timestamp = [timestamp[1],timestamp[0]]
 
+        # Cropping Augmentation, part 1
+        cropping = random()
+        do_crop = self.cropping_augmentation and self.split == "train" and (not self.no_aug) and (cropping > self.cropping_prob)
+        if do_crop:
+            # treat defective case
+            cut_start = random() * timestamp[0] * self.cropping_factor
+            cut_end = random() * (duration - timestamp[1]) * self.cropping_factor
+            # modify vid_all
+            nfeats_all = vid_feat_all.shape[0]
+            keep = utils.timestamp_to_featstamp([cut_start,duration-cut_end],nfeats_all,duration)
+            vid_feat_all = vid_feat_all[keep[0]:keep[1]+1]
+            # modify duration, timestamp, grounding label
+            duration = duration - cut_start - cut_end
+            timestamp = [timestamp[0] - cut_start, timestamp[1] - cut_start]
+            start_pos = timestamp[0] / duration
+            end_pos = timestamp[1] / duration
+        
+        # Adjust video feats
+        vid_feat, nfeats, start_index, end_index = self.get_fixed_length_feat(
+                vid_feat_all, self.S, start_pos, end_pos)
+
+        # Cropping augmentation, part 2
+        if do_crop:
+            # if training, make attention mask
+            fs = utils.timestamp_to_featstamp(timestamp, nfeats, duration)
+            att_mask = np.zeros((self.S))
+            att_mask[fs[0]:fs[1]+1] = 1
+        else:
+            # if not training, get attention mask
+            if self.in_memory:
+                att_mask = self.att_mask[qid]
+            else:
+                att_mask = grd_info["att_mask/"+qid][:]
+
+        # get video masks
         vid_mask = np.zeros((self.S, 1))
         vid_mask[:nfeats] = 1
-
-        # get attention mask
-        if self.in_memory:
-            att_mask = self.att_mask[qid]
-        else:
-            att_mask = grd_info["att_mask/"+qid][:]
-
 
         instance = {
             "vids": vid,
