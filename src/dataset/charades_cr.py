@@ -52,7 +52,7 @@ class CharadesCRDataset(AbstractDataset):
             )
         else:
             raise ValueError("Wrong feature_type")
-        
+        self.num_aug = 5
         # cropping augmentation settings
         self.cropping_augmentation = config.get("cropping_augmentation",False)
         self.cropping_prob = config.get("cropping_prob",0.5)
@@ -86,7 +86,7 @@ class CharadesCRDataset(AbstractDataset):
             query_labels = h5py.File(self.paths["query_labels"], "r")
             for k in tqdm(self.qids, desc="In-Memory: query"):
                 self.query_labels[k]= query_labels[k][:]
-
+        
         # load query information
         query_info = io_utils.load_json(self.paths["query_info"])
         self.wtoi = query_info["wtoi"]
@@ -95,7 +95,7 @@ class CharadesCRDataset(AbstractDataset):
 
         self.batch_size = config.get("batch_size", 64)
         if self.split=='train':
-            self.num_instances = len(self.qids) // 5
+            self.num_instances = len(self.qids) // self.num_aug
         else:
             self.num_instances = len(self.qids)
 
@@ -108,7 +108,7 @@ class CharadesCRDataset(AbstractDataset):
 
     def _getitem_train(self,idx):
         # get query id and corresponding video id
-        qid = str(self.qids[idx*5])
+        qid = str(self.qids[idx*self.num_aug])
         vid = self.anns[qid]["video_id"]
         timestamp = self.anns[qid]["timestamps"]
         duration = self.anns[qid]["duration"]
@@ -122,7 +122,7 @@ class CharadesCRDataset(AbstractDataset):
         q_leng = self.query_lengths[qid]
 
         # get augmented query labels
-        aug_qid = str(self.qids[idx*5 + randint(0,4)])
+        aug_qid = str(self.qids[idx*self.num_aug + randint(0,4)])
         if self.in_memory:
             aug_q_label = self.query_labels[aug_qid]
         else:
