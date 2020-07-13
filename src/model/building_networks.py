@@ -2,11 +2,12 @@ import torch.nn as nn
 
 # import networks
 from src.model import LGI
-from src.model import LGI_CR
+from src.model import LGI_CR, LGI_Beam
 
 """ Network Mapping """
 TGN_LGI = LGI.LGI
 TGN_LGI_CR = LGI_CR.LGI_CR
+TGN_LGI_Beam = LGI_Beam.LGI_Beam
 
 def get_rnn(config, prefix=""):
     name = prefix if prefix is "" else prefix+"_"
@@ -40,6 +41,8 @@ def get_temporal_grounding_network(config, net_type="tgn", raw=False):
         M = TGN_LGI
     elif net_type == "tgn_lgi_cr":
         M = TGN_LGI_CR
+    elif net_type == "tgn_lgi_beam":
+        M = TGN_LGI_Beam
     else:
         raise NotImplementedError(
             "Not supported TGN ({})".format(net_type))
