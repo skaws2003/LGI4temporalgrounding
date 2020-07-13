@@ -3,6 +3,7 @@ from __future__ import division
 from __future__ import print_function
 
 import os
+#import pdb
 import time
 import json
 import h5py
@@ -10,7 +11,7 @@ import string
 import numpy as np
 np.set_printoptions(precision=4)
 from tqdm import tqdm
-from random import randint, sample, random
+from random import random, sample, randint
 
 import torch
 import torch.utils.data as data
@@ -23,7 +24,7 @@ def create_loaders(split, loader_configs, num_workers):
     for di,dt in enumerate(split):
         shuffle = True if dt == "train" else False
         drop_last = True if dt == "train" else False
-        dsets[dt] = CharadesCRDataset(loader_configs[di])
+        dsets[dt] = ActivityNetCaptionsCRDataset(loader_configs[di])
         L[dt] = data.DataLoader(
             dsets[dt],
             batch_size = loader_configs[di]["batch_size"],
@@ -35,24 +36,18 @@ def create_loaders(split, loader_configs, num_workers):
     return dsets, L
 
 
-class CharadesCRDataset(AbstractDataset):
+class ActivityNetCaptionsCRDataset(AbstractDataset):
     def __init__(self, config):
         super(self.__class__, self).__init__(config)
 
         # get options
         self.S = config.get("num_segment", 128)
         self.split = config.get("split", "train")
-        self.data_dir = config.get("data_dir", "data/charades")
-        self.feature_type = config.get("feature_type", "I3D")
+        self.data_dir = config.get("data_dir", "")
+        self.feature_type = config.get("feature_type", "C3D")
         self.in_memory = config.get("in_memory", False)
-        if self.feature_type == "I3D":
-            self.feat_path = config.get(
-                "video_feature_path",
-                "data/charades/features/i3d_finetuned/{}.npy"
-            )
-        else:
-            raise ValueError("Wrong feature_type")
-        self.num_captions_per_segment = 5    # number of captions per segment. for example, if there are 4 back-translated per an original sentence, it should be 5.
+        self.feat_hdf5 = config.get("video_feature_path",
+                "data/ActivityNet/feats/sub_activitynet_v1-3.c3d.hdf5")
 
         # cropping augmentation settings
         self.cropping_augmentation = config.get("cropping_augmentation",False)
@@ -61,21 +56,28 @@ class CharadesCRDataset(AbstractDataset):
         self.no_aug = False
         # CR settings
         self.cr_compare_all = config.get("cr_compare_all",True)
+
         # get paths for proposals and captions
         paths = self._get_data_path(config)
 
         # create labels (or load existing one)
-        ann_path = "data/charades/annotations/charades_sta_{}.txt".format(self.split)
-        aux_ann_path = "data/charades/annotations/Charades_v1_{}.csv".format(self.split)
-        self.anns, self.qids, self.vids = self._load_annotation(ann_path, aux_ann_path)
+        ann_path = config.get("annotation_path",
+                "data/ActivityNet/captions/annotations/train.json")
+        if "train" in self.split:
+            self.anns, self.qids, self.vids, self.qid_ranges  = self._load_annotation(ann_path)
+            self.num_instances = len(self.qid_ranges)
+        else:
+            self.anns, self.qids, self.vids  = self._load_annotation(ann_path)
+            self.num_instances = len(self.qids)
         if not self._exist_data(paths):
             self.generate_labels(config)
 
         # load features if use in_memory
         if self.in_memory:
             self.feats = {}
-            for vid in tqdm(self.vids, desc="In-Memory: vid_feat"):
-                self.feats[vid] = np.load(self.feat_path.format(vid)).squeeze()
+            h = io_utils.load_hdf5(self.feat_hdf5, verbose=False)
+            for k in tqdm(self.vids, desc="In-Memory: vid_feat"):
+                self.feats[k] = h[k]["c3d_features"][:]
 
             self.s_pos, self.e_pos, self.att_mask = {}, {}, {}
             grd_info = io_utils.load_hdf5(self.paths["grounding_info"], False)
@@ -88,33 +90,33 @@ class CharadesCRDataset(AbstractDataset):
             query_labels = h5py.File(self.paths["query_labels"], "r")
             for k in tqdm(self.qids, desc="In-Memory: query"):
                 self.query_labels[k]= query_labels[k][:]
-        
-        # load query information
+
+        # load and prepare json files
         query_info = io_utils.load_json(self.paths["query_info"])
         self.wtoi = query_info["wtoi"]
         self.itow = query_info["itow"]
         self.query_lengths = query_info["query_lengths"]
 
         self.batch_size = config.get("batch_size", 64)
-        if self.split=='train':
-            self.num_instances = len(self.qids) // self.num_captions_per_segment
-        else:
-            self.num_instances = len(self.qids)
+        
 
-    def __getitem__(self, idx):
-        if self.split =='train':
+    def __getitem__(self,idx):
+        if self.split == "train":
             return self._getitem_train(idx)
         else:
             return self._getitem_test(idx)
 
-
-    def _getitem_train(self,idx):
+    def _getitem_train(self, idx):
         # get query id and corresponding video id
-        base_idx = idx * self.num_captions_per_segment
-        qid, aug_qid = sample(range(base_idx,base_idx+self.num_captions_per_segment), 2)
-        if not self.cr_compare_all:
-            qid = base_idx
+        qid_range = self.qid_ranges[idx]
+        if self.cr_compare_all:
+            qid,aug_qid = sample(range(qid_range[0],qid_range[1]+1),2)
+        else:
+            qid = qid_range[0]
+            aug_qid = randint(*qid_range)
         qid = str(self.qids[qid])
+        aug_qid = str(self.qids[aug_qid])
+
         vid = self.anns[qid]["video_id"]
         timestamp = self.anns[qid]["timestamps"]
         duration = self.anns[qid]["duration"]
@@ -149,13 +151,7 @@ class CharadesCRDataset(AbstractDataset):
         if self.in_memory:
             vid_feat_all = self.feats[vid]
         else:
-            vid_feat_all = np.load(self.feat_path.format(vid)).squeeze()
-        
-        # treat defective case
-        if timestamp[1] > duration:
-            duration = timestamp[1]
-        if timestamp[0] > timestamp[1]:
-            timestamp = [timestamp[1],timestamp[0]]
+            vid_feat_all = io_utils.load_hdf5(self.feat_hdf5, verbose=False)[vid]["c3d_features"]
 
         # Cropping Augmentation, part 1
         cropping = random()
@@ -177,7 +173,7 @@ class CharadesCRDataset(AbstractDataset):
         # Adjust video feats
         vid_feat, nfeats, start_index, end_index = self.get_fixed_length_feat(
                 vid_feat_all, self.S, start_pos, end_pos)
-
+        
         # Cropping augmentation, part 2
         if do_crop:
             # if training, make attention mask
@@ -194,32 +190,30 @@ class CharadesCRDataset(AbstractDataset):
         # get video masks
         vid_mask = np.zeros((self.S, 1))
         vid_mask[:nfeats] = 1
-
-
+        
         instance = {
-            "vids": vid,
-            "qids": qid,
+            "vids": vid,    # video name
+            "qids": qid,    # query id
             "aug_qids": aug_qid,
-            "timestamps": timestamp, # GT location [s, e] (second)
-            "duration": duration, # video span (second)
-            "query_lengths": q_leng,
+            "timestamps": timestamp, # GT location [s, e] (seconds)
+            "duration": duration, # video span (seconds)
+            "query_lengths": q_leng,    # query lengths
             "query_labels": torch.LongTensor(q_label).unsqueeze(0),     # [1,L_q_max]
             "query_masks": (torch.FloatTensor(q_label)>0).unsqueeze(0), # [1,L_q_max]
             "aug_query_lengths": aug_q_leng,
             "aug_query_labels": torch.LongTensor(aug_q_label).unsqueeze(0),     # [1,L_q_max]
             "aug_query_masks": (torch.FloatTensor(aug_q_label)>0).unsqueeze(0), # [1,L_q_max]
-            "grounding_start_pos": torch.FloatTensor([start_pos]), # [1]; normalized
-            "grounding_end_pos": torch.FloatTensor([end_pos]),     # [1]; normalized
-            "grounding_att_masks": torch.FloatTensor(att_mask),  # [L_v]
-            "nfeats": torch.FloatTensor([nfeats]),
+            "grounding_start_pos": torch.FloatTensor([start_pos]), # [1]; normalized starting point
+            "grounding_end_pos": torch.FloatTensor([end_pos]),     # [1]; normalized ending point
+            "grounding_att_masks": torch.FloatTensor(att_mask),  # [L_v] - language
+            "nfeats": torch.FloatTensor([nfeats]),  # video feature length
             "video_feats": torch.FloatTensor(vid_feat), # [L_v,D_v]
             "video_masks": torch.ByteTensor(vid_mask), # [L_v,1]
         }
-
         return instance
 
 
-    def _getitem_test(self,idx):
+    def _getitem_test(self, idx):
         # get query id and corresponding video id
         qid = str(self.qids[idx])
         vid = self.anns[qid]["video_id"]
@@ -244,18 +238,14 @@ class CharadesCRDataset(AbstractDataset):
             end_pos = grd_info["end_pos/"+qid][()]
 
         # get video features
-        if self.feature_type == "I3D":
-            if self.in_memory:
-                vid_feat_all = self.feats[vid]
-            else:
-                vid_feat_all = np.load(self.feat_path.format(vid)).squeeze()
-            vid_feat, nfeats, start_index, end_index = self.get_fixed_length_feat(
-                vid_feat_all, self.S, start_pos, end_pos)
+        if self.in_memory:
+            vid_feat_all = self.feats[vid]
         else:
-            raise ValueError("Wrong feature_type")
-
-        vid_mask = np.zeros((self.S, 1))
-        vid_mask[:nfeats] = 1
+            vid_feat_all = io_utils.load_hdf5(self.feat_hdf5, verbose=False)[vid]["c3d_features"]
+        
+        # Adjust video feats
+        vid_feat, nfeats, start_index, end_index = self.get_fixed_length_feat(
+                vid_feat_all, self.S, start_pos, end_pos)
 
         # get attention mask
         if self.in_memory:
@@ -263,30 +253,33 @@ class CharadesCRDataset(AbstractDataset):
         else:
             att_mask = grd_info["att_mask/"+qid][:]
 
+        # get video masks
+        vid_mask = np.zeros((self.S, 1))
+        vid_mask[:nfeats] = 1
 
+        
         instance = {
-            "vids": vid,
-            "qids": qid,
-            "timestamps": timestamp, # GT location [s, e] (second)
-            "duration": duration, # video span (second)
-            "query_lengths": q_leng,
+            "vids": vid,    # video name
+            "qids": qid,    # query id
+            "timestamps": timestamp, # GT location [s, e] (seconds)
+            "duration": duration, # video span (seconds)
+            "query_lengths": q_leng,    # query lengths
             "query_labels": torch.LongTensor(q_label).unsqueeze(0),     # [1,L_q_max]
             "query_masks": (torch.FloatTensor(q_label)>0).unsqueeze(0), # [1,L_q_max]
-            "grounding_start_pos": torch.FloatTensor([start_pos]), # [1]; normalized
-            "grounding_end_pos": torch.FloatTensor([end_pos]),     # [1]; normalized
-            "grounding_att_masks": torch.FloatTensor(att_mask),  # [L_v]
-            "nfeats": torch.FloatTensor([nfeats]),
+            "grounding_start_pos": torch.FloatTensor([start_pos]), # [1]; normalized starting point
+            "grounding_end_pos": torch.FloatTensor([end_pos]),     # [1]; normalized ending point
+            "grounding_att_masks": torch.FloatTensor(att_mask),  # [L_v] - language
+            "nfeats": torch.FloatTensor([nfeats]),  # video feature length
             "video_feats": torch.FloatTensor(vid_feat), # [L_v,D_v]
             "video_masks": torch.ByteTensor(vid_mask), # [L_v,1]
         }
-
         return instance
 
 
     def collate_fn(self, data):
         seq_items = ["video_feats", "video_masks", "grounding_att_masks"]
         tensor_items = [
-            "query_labels", "query_masks", "aug_query_labels", "aug_query_masks", "nfeats",
+            "query_labels", "query_masks", "nfeats",
             "grounding_start_pos", "grounding_end_pos",
         ]
         batch = {k: [d[k] for d in data] for k in data[0].keys()}
@@ -303,11 +296,10 @@ class CharadesCRDataset(AbstractDataset):
 
         else:
             for k in tensor_items:
-                if k in batch.keys():
-                    batch[k] = torch.cat(batch[k], 0)
+                batch[k] = torch.cat(batch[k], 0)
             for k in seq_items:
-                if k in batch.keys():
-                    batch[k] = torch.nn.utils.rnn.pad_sequence(batch[k], batch_first=True)
+                batch[k] = torch.nn.utils.rnn.pad_sequence(
+                    batch[k], batch_first=True)
 
         return batch
 
@@ -323,10 +315,10 @@ class CharadesCRDataset(AbstractDataset):
     def _get_data_path(self, config):
 
         split = config.get("split", "train")
-        L = config.get("max_length", 10)
+        L = config.get("max_length", 20)
         F = config.get("frequency_threshold", 1)
         S = config.get("num_segment", 128)
-        FT = config.get("feature_type", "I3D")
+        FT = config.get("feature_type", "C3D")
 
         root_dir = os.path.join(config.get("data_dir", ""), "preprocess")
         grounding_info_path = os.path.join(root_dir,
@@ -348,45 +340,92 @@ class CharadesCRDataset(AbstractDataset):
         }
         return self.paths
 
-    def _preprocessing(self, anns, aux_ann_path):
+    def _preprocessing_train(self, anns, new_anns, qid, vids):
         """ Preprocessing annotations
         Args:
             anns: annotations
-            aux_ann_path: path for annotations for auxiliary information (e.g., duration)
+            qid: start query id
         Returns:
             new_anns: preprocessed annotations
+            qid: last query id
         """
-        aux_anns = io_utils.load_csv(aux_ann_path)
-        vid2len = {ann["id"]: ann["length"] for ann in aux_anns}
-        vids = []
-
-        new_anns = dict()
+        qid_ranges = []
         translator = str.maketrans("", "", string.punctuation)
-        for qid,ann in enumerate(anns):
-            info, query = ann.split("##")
-            vid, spos, epos = info.split(" ")
-            duration = vid2len[vid]
-            new_anns[str(qid)] = {
-                "timestamps": [float(spos), float(epos)],
-                "query": query,
-                "tokens": utils.tokenize(query.lower(), translator),
-                "duration": float(duration),
-                "video_id": vid
-            }
-            vids.append(vid)
-        return new_anns, list(set(vids))
+        for vid in anns.keys():
+            ann = anns[vid]
+            duration = ann["duration"]
+            for ts,q,aqs in zip(ann["timestamps"], ann["sentences"], ann["aug_sentences"]):
+                id_range = [qid]
+                new_anns[str(qid)] = {
+                    "timestamps": ts,
+                    "query": q,
+                    "tokens": utils.tokenize(q.lower(), translator),
+                    "duration": duration,
+                    "video_id": vid
+                }
+                qid += 1
+                # treat augmented query
+                for augmented_query in aqs:
+                    new_anns[str(qid)] = {
+                        "timestamps": ts,
+                        "query": augmented_query,
+                        "tokens": utils.tokenize(q.lower(), translator),
+                        "duration": duration,
+                        "video_id": vid
+                    }
+                    qid += 1
+                id_range.append(qid)
+                qid_ranges.append(id_range)
+        vids.extend(list(anns.keys()))
+        return new_anns, qid, list(set(vids)), qid_ranges
 
-    def _load_annotation(self, ann_path, aux_path):
+    def _preprocessing_test(self, anns, new_anns, qid, vids):
+        """ Preprocessing annotations
+        Args:
+            anns: annotations
+            qid: start query id
+        Returns:
+            new_anns: preprocessed annotations
+            qid: last query id
+        """
+        translator = str.maketrans("", "", string.punctuation)
+        for vid in anns.keys():
+            ann = anns[vid]
+            duration = ann["duration"]
+            for ts,q in zip(ann["timestamps"], ann["sentences"]):
+                id_range = [qid]
+                new_anns[str(qid)] = {
+                    "timestamps": ts,
+                    "query": q,
+                    "tokens": utils.tokenize(q.lower(), translator),
+                    "duration": duration,
+                    "video_id": vid
+                }
+                qid += 1
+        vids.extend(list(anns.keys()))
+        return new_anns, qid, list(set(vids))
+
+    def _load_annotation(self, ann_path):
         """ Load annotations
         Args:
             ann_paths: path for annotations; list or string
-            aux_paths: path for auxiliary annotations; list or string
         Returns:
             new_anns: loaded and preprocessed annotations
         """
-        anns = io_utils.load_lines_from(ann_path)
-        new_anns, vids = self._preprocessing(anns, aux_path)
-        return new_anns, list(new_anns.keys()), vids
+        qid = 0
+        new_anns = {}
+        vids = []
+        if isinstance(ann_path, list):
+            # for validation annotation
+            for ap in ann_path:
+                anno = io_utils.load_json(ap)
+                new_anns, qid, vids = self._preprocessing_test(anno, new_anns, qid, vids)
+            return new_anns, list(new_anns.keys()), vids
+        else:
+            # for train annotation
+            anno = io_utils.load_json(ann_path)
+            new_anns, qid, vids, qid_ranges = self._preprocessing_train(anno, new_anns, qid, vids)
+            return new_anns, list(new_anns.keys()), vids, qid_ranges
 
     def generate_labels(self, config):
         """ Generate and save labels for temporal language grouding
@@ -395,20 +434,20 @@ class CharadesCRDataset(AbstractDataset):
                 - itow: index to word dictionary (vocabulary)
                 - query_lengths: lengths for queries
             2)query_labels (.h5): qid -> label
-            3)grounding_labels (.h5): qid -> labels
+            3)grounding_labels (.h5): qid -> label
         """
 
         """ Query information """
         if not os.path.exists(self.paths["query_labels"]):
             # build vocabulary from training data
-            train_ann_path = "data/charades/annotations/charades_sta_train.txt"
-            train_aux_path = "data/charades/annotations/Charades_v1_train.csv"
-            train_anns, _, _ = self._load_annotation(train_ann_path, train_aux_path)
+            train_ann_path = "data/ActivityNet/captions/annotations/train.json"
+            reading_results = self._load_annotation(train_ann_path)
+            train_anns = reading_results[0]
             wtoi = self._build_vocab(train_anns)
             itow = {v:k for k,v in wtoi.items()}
 
             # encode query and save labels (+lenghts)
-            L = config.get("max_length", 20)
+            L = config.get("max_length", 25)
             encoded = self._encode_query(self.anns, wtoi, L)
             query_labels = io_utils.open_hdf5( self.paths["query_labels"], "w")
             for qid in tqdm(encoded["query_lengths"].keys(), desc="Saving query"):
@@ -425,6 +464,8 @@ class CharadesCRDataset(AbstractDataset):
 
         """ Grounding information """
         if not os.path.exists(self.paths["grounding_info"]):
+            if self.feature_type == "C3D":
+                features = io_utils.load_hdf5(self.feat_hdf5)
             grd_dataset = io_utils.open_hdf5(self.paths["grounding_info"], "w")
             start_pos = grd_dataset.create_group("start_pos")
             end_pos = grd_dataset.create_group("end_pos")
@@ -439,11 +480,7 @@ class CharadesCRDataset(AbstractDataset):
 
                 # get attention calibration mask
                 vid = ann["video_id"]
-                if self.feature_type == "I3D":
-                    nfeats = np.load(self.feat_path.format(vid)).shape[0]
-                else:
-                    raise NotImplementedError()
-
+                nfeats = features[vid]["c3d_features"][:].shape[0]
                 nfeats = min(nfeats, self.S)
 
                 fs = utils.timestamp_to_featstamp(ts, nfeats, vid_d)
@@ -462,26 +499,30 @@ class CharadesCRDataset(AbstractDataset):
 def get_loader():
     conf = {
         "train_loader": {
-            "dataset": "charades",
+            "dataset": "activitynet",
             "split": "train",
-            "batch_size": 1,
-            "data_dir": "data/charades",
-            "video_feature_path": "data/charades/features/i3d_finetuned/{}.npy",
-            "max_length": 10,
-            "word_frequency_threshold": 1,
-            "num_segment": 128,
-            "feature_type": "I3D",
-        },
-        "test_loader": {
-            "dataset": "charades",
-            "split": "test",
-            "batch_size": 1,
-            "data_dir": "data/charades",
-            "video_feature_path": "data/charades/features/i3d_finetuned/{}.npy",
+            "batch_size": 100,
+            "data_dir": "data/ActivityNet/ablr",
+            "annotation_path": "data/ActivityNet/captions/annotations/train.json",
+            "video_feature_path": "data/ActivityNet/feats/i3d_fps30/{}.npy",
             "max_length": 25,
             "word_frequency_threshold": 1,
             "num_segment": 128,
-            "feature_type": "I3D",
+            "feature_type": "C3D",
+        },
+        "test_loader": {
+            "dataset": "activitynet",
+            "split": "val",
+            "batch_size": 100,
+            "data_dir": "data/ActivityNet/ablr",
+            "annotation_path":
+                ["data/ActivityNet/captions/annotations/val_1.json",
+                "data/ActivityNet/captions/annotations/val_2.json"],
+            "video_feature_path": "data/ActivityNet/feats/i3d_fps30/{}.npy",
+            "max_length": 25,
+            "word_frequency_threshold": 1,
+            "num_segment": 128,
+            "feature_type": "C3D",
         }
     }
     print(json.dumps(conf, indent=4))
@@ -495,19 +536,16 @@ if __name__ == "__main__":
     dset, l = get_loader()
     bt = time.time()
     st = time.time()
-    num_ol = 0
     for batch in l["train"]:
+        print("=====> {}th training batch ({:.5f}s)".format(i, time.time() - st))
         i += 1
-        if batch["grounding_start_pos"] < 0.0 or batch["grounding_end_pos"] > 1.0:
-            num_ol += 1
         st = time.time()
-    print("# of outlier in training data: {}/{}".format(num_ol, len(l["train"])))
     i = 1
-    num_ol = 0
     for batch in l["test"]:
+        print("=====> {}th test batch ({:.5f}s)".format(i, time.time() - st))
         i += 1
-        if batch["grounding_start_pos"] < 0.0 or batch["grounding_end_pos"] > 1.0:
-            num_ol += 1
         st = time.time()
-    print("# of outlier in test data: {}/{}".format(num_ol, len(l["test"])))
     print("Total elapsed time ({:.5f}s)".format(time.time() - bt))
+
+
+

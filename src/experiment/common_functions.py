@@ -4,7 +4,7 @@ from tqdm import tqdm
 
 import torch
 
-from src.dataset import anet, charades, charades_cr
+from src.dataset import anet, anet_cr, charades, charades_cr
 from src.model import building_networks as bn
 from src.utils import utils, io_utils
 
@@ -18,6 +18,8 @@ def get_method(method_type):
 def get_dataset(dataset):
     if dataset == "anet":
         D = eval("anet")
+    elif dataset == "anet_cr":
+        D = eval("anet_cr")
     elif dataset == "charades":
         D = eval("charades")
     elif dataset == "charades_cr":

@@ -125,7 +125,7 @@ class ActivityNetCaptionsDataset(AbstractDataset):
 
         # Cropping Augmentation, part 1
         cropping = random()
-        do_crop = self.cropping_augmentation and self.split == "train" and (not self.no_aug) and (cropping > self.cropping_prob)
+        do_crop = self.cropping_augmentation and self.split == "train" and (not self.no_aug) and (cropping < self.cropping_prob)
         if do_crop:
             # treat defective case
             cut_start = random() * timestamp[0] * self.cropping_factor
