@@ -130,7 +130,6 @@ class ActivityNetCaptionsCRDataset(AbstractDataset):
         q_leng = self.query_lengths[qid]
 
         # get augmented query labels
-        aug_qid = str(self.qids[aug_qid])
         if self.in_memory:
             aug_q_label = self.query_labels[aug_qid]
         else:
@@ -279,7 +278,7 @@ class ActivityNetCaptionsCRDataset(AbstractDataset):
     def collate_fn(self, data):
         seq_items = ["video_feats", "video_masks", "grounding_att_masks"]
         tensor_items = [
-            "query_labels", "query_masks", "nfeats",
+            "query_labels", "query_masks", "aug_query_labels", "aug_query_masks", "nfeats",
             "grounding_start_pos", "grounding_end_pos",
         ]
         batch = {k: [d[k] for d in data] for k in data[0].keys()}
@@ -296,10 +295,11 @@ class ActivityNetCaptionsCRDataset(AbstractDataset):
 
         else:
             for k in tensor_items:
-                batch[k] = torch.cat(batch[k], 0)
+                if k in batch.keys():
+                    batch[k] = torch.cat(batch[k], 0)
             for k in seq_items:
-                batch[k] = torch.nn.utils.rnn.pad_sequence(
-                    batch[k], batch_first=True)
+                if k in batch.keys():
+                    batch[k] = torch.nn.utils.rnn.pad_sequence(batch[k], batch_first=True)
 
         return batch
 
@@ -374,7 +374,7 @@ class ActivityNetCaptionsCRDataset(AbstractDataset):
                         "video_id": vid
                     }
                     qid += 1
-                id_range.append(qid)
+                id_range.append(qid-1)
                 qid_ranges.append(id_range)
         vids.extend(list(anns.keys()))
         return new_anns, qid, list(set(vids)), qid_ranges
