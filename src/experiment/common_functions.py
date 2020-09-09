@@ -4,7 +4,7 @@ from tqdm import tqdm
 
 import torch
 
-from src.dataset import anet, anet_cr, charades, charades_cr
+from src.dataset import anet, anet_cr, charades, charades_cr, charades_rpn, charades_json, charades_tokens
 from src.model import building_networks as bn
 from src.utils import utils, io_utils
 
@@ -24,6 +24,12 @@ def get_dataset(dataset):
         D = eval("charades")
     elif dataset == "charades_cr":
         D = eval("charades_cr")
+    elif dataset == "charades_rpn":
+        D = eval("charades_rpn")
+    elif dataset == "charades_json":
+        D = eval("charades_json")
+    elif dataset == "charades_tokens":
+        D = eval("charades_tokens")
     else:
         raise NotImplementedError("Not supported dataset type ({})".format(dataset))
     return D

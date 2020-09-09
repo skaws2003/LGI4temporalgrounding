@@ -32,7 +32,7 @@ class TALLEvaluator(object):
         self.duration = None
 
     def get_metric(self):
-        return "R1-0.5"
+        return "mIoU"
 
     def set_duration(self, duration=[]):
         if len(duration) == 0:
